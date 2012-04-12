@@ -7,7 +7,7 @@
 
 int main(int argc, char **argv)
 {
-  uint32 i, t;
+  u32 i, t;
 
   struct iovec *iov;
   struct mmsghdr *messages;
@@ -30,7 +30,7 @@ int main(int argc, char **argv)
   for (i = 0; i < hosts->cnt; ++i)
   {
     sock_addr[i].sin_family = AF_INET;
-    memcpy(&sock_addr[i].sin_addr, &hosts->itms[i].full, sizeof(uint32));
+    memcpy(&sock_addr[i].sin_addr, &hosts->itms[i].full, sizeof(u32));
 
     icmp_hdr[i].type = ICMP_ECHO;
     icmp_hdr[i].code = 0;
@@ -53,7 +53,7 @@ int main(int argc, char **argv)
 
   libmping_open();
 
-  uint32 cnt = 5;
+  u32 cnt = 5;
   while (cnt--)
   {
     libmping_poll(messages, 0, 201);

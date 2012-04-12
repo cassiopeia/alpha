@@ -1,11 +1,17 @@
 #include "lib.h"
 
-sint32 fd;
+s32 fd;
 struct stat statistics[201];
 
-sint32 libmping_open()
+s32 libmping_open()
 {
-  fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+  struct ifreq device;
+  struct ifreq hwtstamp;
+  struct hwtstamp_config hwconfig, hwconfig_requested;
+
+  struct sockaddr_in addr;
+
+  fd = socket (AF_INET, SOCK_RAW, IPPROTO_ICMP);
 
   if (fd < 0)
   {
@@ -13,50 +19,85 @@ sint32 libmping_open()
     return fd;
   }
 
-  int status;
+  memset (&device, 0, sizeof(device));
 
-  uint32 recvbuf = 4194304 + 65535;
+  strncpy (device.ifr_name, "eth0", sizeof (device.ifr_name));
+  if (ioctl (fd, SIOCGIFADDR, &device) < 0)
+    fprintf (stderr, "getting interface IP address\n");
+
+  memset (&hwtstamp, 0, sizeof (hwtstamp));
+  strncpy (hwtstamp.ifr_name, "eth0", sizeof (hwtstamp.ifr_name));
+  hwtstamp.ifr_data = (void *)&hwconfig;
+  memset (&hwconfig, 0, sizeof (&hwconfig));
+
+  hwconfig.tx_type = HWTSTAMP_TX_ON;
+  hwconfig.rx_filter = HWTSTAMP_FILTER_ALL;
+
+  hwconfig_requested = hwconfig;
+
+  if (ioctl (fd, SIOCSHWTSTAMP, &hwtstamp) < 0)
+  {
+    if ((errno == EINVAL || errno == ENOTSUP) &&
+        hwconfig_requested.tx_type == HWTSTAMP_TX_OFF &&
+        hwconfig_requested.rx_filter == HWTSTAMP_FILTER_NONE)
+    {
+      printf ("SIOCSHWTSTAMP: disabling hardware time stamping not possible\n");
+    }
+    else
+      perror ("SIOCSHWTSTAMP");
+  }
+  printf ("SIOCSHWTSTAMP: tx_type %d requested, got %d; rx_filter %d requested, got %d\n",
+    hwconfig_requested.tx_type,
+    hwconfig.tx_type,
+    hwconfig_requested.rx_filter,
+    hwconfig.rx_filter
+  );
+
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl (INADDR_ANY);
+  addr.sin_port = htons (0);
+  if (bind (fd, (struct sockaddr *)&addr, sizeof (struct sockaddr_in)) < 0)
+    perror ("bind");
+
+
+  s32 status;
+
+  u32 recvbuf = 65535 + 65535 + 65535;
   status = setsockopt (fd, SOL_SOCKET, SO_SNDBUF, &recvbuf, sizeof (recvbuf));
   if (status != 0)
-    fprintf(stderr, "sndbuf error\n");
+    fprintf (stderr, "sndbuf error\n");
   else
-    fprintf(stdout, "sndbuf %u\n", recvbuf);
+    fprintf (stdout, "sndbuf %u\n", recvbuf);
 
   status = setsockopt (fd, SOL_SOCKET, SO_RCVBUF, &recvbuf, sizeof (recvbuf));
   if (status != 0)
-    fprintf(stderr, "rcvbuf error\n");
+    fprintf (stderr, "rcvbuf error\n");
   else
-    fprintf(stdout, "rcvbuf %u\n", recvbuf);
+    fprintf (stdout, "rcvbuf %u\n", recvbuf);
 
-  int opt = 1;
-  status = setsockopt (fd, SOL_SOCKET, SO_TIMESTAMP, &opt, sizeof (opt));
-  if (status != 0)
-    fprintf(stderr, "error SO_TIMESTAMP\n");
-
-  //status = setsockopt (fd, SOL_SOCKET, SO_TIMESTAMPNS, &opt, sizeof (opt));
-  if (status != 0)
-    fprintf(stderr, "error SO_TIMESTAMPNS\n");
 
   int flags = 0;
-  flags |= SOF_TIMESTAMPING_TX_HARDWARE;
-  //flags |= SOF_TIMESTAMPING_TX_SOFTWARE;
-  flags |= SOF_TIMESTAMPING_RX_HARDWARE;
-  //flags |= SOF_TIMESTAMPING_RX_SOFTWARE;
-  //flags |= SOF_TIMESTAMPING_SOFTWARE;
-  flags |= SOF_TIMESTAMPING_SYS_HARDWARE;
+  //flags |= SOF_TIMESTAMPING_TX_HARDWARE;
+  flags |= SOF_TIMESTAMPING_TX_SOFTWARE;
+  //flags |= SOF_TIMESTAMPING_RX_HARDWARE;
+  flags |= SOF_TIMESTAMPING_RX_SOFTWARE;
+  flags |= SOF_TIMESTAMPING_SOFTWARE;
+  //flags |= SOF_TIMESTAMPING_SYS_HARDWARE;
   //flags |= SOF_TIMESTAMPING_RAW_HARDWARE;
-  //status = setsockopt (fd, SOL_SOCKET, SO_TIMESTAMPING, &flags, sizeof (flags));
+  status = setsockopt (fd, SOL_SOCKET, SO_TIMESTAMPING, &flags, sizeof (flags));
+  if (status < 0)
+    perror ("SO_TIMESTAMPING");
+
+
+  u8 tos = IPTOS_LOWDELAY;
+  status = setsockopt (fd, IPPROTO_IP, IP_TOS, &tos, sizeof (tos));
   if (status != 0)
-    fprintf(stderr, "error SO_TIMESTAMPING\n");
+    fprintf (stderr, "IP_TOS error\n");
 
-  uint8 tos = IPTOS_LOWDELAY;
-  status = setsockopt (fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
-  if (status != 0)
-    fprintf(stderr, "IP_TOS error\n");
 
-  memset(statistics, 0, sizeof(statistics));
+  memset (statistics, 0, sizeof (statistics));
 
-  uint32 i;
+  u32 i;
   for (i = 0; i < 201; ++i)
   {
     statistics[i].iden = 0;
@@ -70,9 +111,9 @@ sint32 libmping_open()
   return fd;
 }
 
-sint32 libmping_poll(struct mmsghdr *datagrams, uint32 offset, uint32 count)
+s32 libmping_poll (struct mmsghdr *datagrams, u32 offset, u32 count)
 {
-  uint32 i, j;
+  u32 i;
 
   char control_buffer[count][512];
 
@@ -83,7 +124,7 @@ sint32 libmping_poll(struct mmsghdr *datagrams, uint32 offset, uint32 count)
   struct iphdr ip_hdr[count];
   struct icmphdr icmp_hdr[count];
 
-  struct timeval  temp_time, diff_time;
+  struct timespec ts_temp;
 
   struct cmsghdr     *cmsg;
   struct iphdr       *ip_ptr;
@@ -92,7 +133,7 @@ sint32 libmping_poll(struct mmsghdr *datagrams, uint32 offset, uint32 count)
 
   memset(iov, 0, sizeof(iov));
   memset(messages, 0, sizeof(messages));
-  memset(sock_addr, 0, sizeof(sock_addr));
+  memset (sock_addr, 0, sizeof (sock_addr));
 
   for (i = 0; i < count; ++i)
   {
@@ -101,27 +142,25 @@ sint32 libmping_poll(struct mmsghdr *datagrams, uint32 offset, uint32 count)
     icmp_ptr->checksum = 0;
     icmp_ptr->un.echo.sequence += 1;
 
-    icmp_ptr->checksum = chksum((uint16 *)icmp_ptr, sizeof(*icmp_ptr));
+    icmp_ptr->checksum = chksum ((u16 *)icmp_ptr, sizeof (*icmp_ptr));
 
     if (statistics[i].addr.full == 0)
     {
       addr_ptr = (struct sockaddr_in *)datagrams[i].msg_hdr.msg_name;
-      memcpy(&statistics[i].addr.full, &addr_ptr->sin_addr, sizeof(uint32));
+      memcpy (&statistics[i].addr.full, &addr_ptr->sin_addr, sizeof (u32));
     }
 
     statistics[i].iden = icmp_ptr->un.echo.id;
     statistics[i].seqn = icmp_ptr->un.echo.sequence;
     statistics[i].sent++;
 
-    gettimeofday (&statistics[i].time, NULL);
-
     iov[i][0].iov_base = &ip_hdr[i];
-    iov[i][0].iov_len = sizeof(struct iphdr);
+    iov[i][0].iov_len = sizeof (struct iphdr);
     iov[i][1].iov_base = &icmp_hdr[i];
-    iov[i][1].iov_len = sizeof(struct icmphdr);
+    iov[i][1].iov_len = sizeof (struct icmphdr);
 
     messages[i].msg_hdr.msg_name = (struct sockaddr *)&sock_addr[i];
-    messages[i].msg_hdr.msg_namelen = sizeof(sock_addr[i]);
+    messages[i].msg_hdr.msg_namelen = sizeof (sock_addr[i]);
     messages[i].msg_hdr.msg_iov = iov[i];
     messages[i].msg_hdr.msg_iovlen = 2;
     messages[i].msg_hdr.msg_control = control_buffer[i];
@@ -129,126 +168,103 @@ sint32 libmping_poll(struct mmsghdr *datagrams, uint32 offset, uint32 count)
   }
 
 
+  u16 j;
+  s32 ret;
   float tmp, sub;
-  sint32 ret, ret2;
-  uint32 str;
-  uint32 stp;
-  uint32 found = 0;
-
-/*
-  for (str = 0; str < count; str += ret)
-  {
-    stp = count - str;
-    ret = sendmmsg (fd, &datagrams[str], stp < 16 ? stp : 16, 0);
-
-    suma += ret;
-  }
-*/
 
   ret = sendmmsg (fd, datagrams, count, 0);
 
-  sleep(1);
+  for (i = 0; i < count; ++i)
+  {
+    clock_gettime (CLOCK_REALTIME, &statistics[i].time);
+  }
 
-  ret2 = recvmmsg(fd, messages, count, MSG_DONTWAIT, NULL);
+  sleep (1);
 
-  for (i = 0; i < ret2; ++i)
+  ret = recvmmsg (fd, messages, count, MSG_DONTWAIT, NULL);
+
+  for (i = 0; i < ret; ++i)
   {
     ip_ptr = (struct iphdr *)messages[i].msg_hdr.msg_iov[0].iov_base;
     icmp_ptr = (struct icmphdr *)messages[i].msg_hdr.msg_iov[1].iov_base;
     addr_ptr = (struct sockaddr_in *)messages[i].msg_hdr.msg_name;
 
-    for (cmsg = CMSG_FIRSTHDR (&messages[i].msg_hdr); cmsg != NULL; cmsg = CMSG_NXTHDR(&messages[i].msg_hdr, cmsg))
+    for (cmsg = CMSG_FIRSTHDR (&messages[i].msg_hdr); cmsg != NULL; cmsg = CMSG_NXTHDR (&messages[i].msg_hdr, cmsg))
     {
       if (cmsg->cmsg_level == SOL_SOCKET)
       {
         switch (cmsg->cmsg_type)
         {
-          case SO_TIMESTAMP:
-            memcpy (&temp_time, CMSG_DATA (cmsg), sizeof (temp_time));
-            break;
-          case SO_TIMESTAMPNS:
-            printf("SO_TIMESTAMPNS\n");
-            break;
           case SO_TIMESTAMPING:
-            printf("SO_TIMESTAMPING\n");
+            memcpy (&ts_temp, CMSG_DATA (cmsg), sizeof (ts_temp));
+            break;
+          default:
+            fprintf (stderr, "Unknown %d\n", cmsg->cmsg_type);
             break;
         }
       }
     }
 
-    found = 0;
+    j = icmp_ptr->un.echo.id - 1;
 
-    for (j = 0; j < count; ++j)
+    if (j > count)
+      continue;
+
+    if (statistics[j].iden != icmp_ptr->un.echo.id)
+      continue;
+
+    if (statistics[j].seqn != icmp_ptr->un.echo.sequence)
+      continue;
+
+    tmp = timespec_diff (&statistics[j].time, &ts_temp) / 1.0e6;
+
+    if (statistics[j].rtt_min == -1 || statistics[j].rtt_min > tmp)
+      statistics[j].rtt_min = tmp;
+
+    if (statistics[j].rtt_max < tmp)
+      statistics[j].rtt_max = tmp;
+
+    statistics[j].rtt_sum += tmp;
+
+    if (statistics[j].rtt_prv != -1)
     {
-      if (addr_ptr->sin_addr.s_addr != statistics[j].addr.full)
-        continue;
-
-      if (icmp_ptr->un.echo.id != statistics[j].iden)
-        continue;
-
-      if (icmp_ptr->un.echo.sequence != statistics[j].seqn)
-        continue;
-
-      found = 1;
-
-      if (0 != timeval_sub (&temp_time, &statistics[j].time, &diff_time))
-        break;
-
-      tmp = timeval_msec(&diff_time);
-
-      if (statistics[j].rtt_min == -1 || statistics[j].rtt_min > tmp)
-        statistics[j].rtt_min = tmp;
-
-      if (statistics[j].rtt_max < tmp)
-        statistics[j].rtt_max = tmp;
-
-      statistics[j].rtt_sum += tmp;
-
-      if (statistics[j].rtt_prv != -1)
-      {
-        if (statistics[j].rtt_prv > tmp)
-          sub = statistics[j].rtt_prv - tmp;
-        else
-          sub = tmp - statistics[j].rtt_prv;
-
-        if (statistics[j].jtr_min == -1 || statistics[j].jtr_min > sub)
-          statistics[j].jtr_min  = sub;
-
-        if (statistics[j].jtr_max < sub)
-          statistics[j].jtr_max = sub;
-
-        statistics[j].jtr_sum += sub;
-      }
-
-      statistics[j].rtt_prv = tmp;
-
-      if (icmp_ptr->type == ICMP_ECHOREPLY)
-        statistics[j].recv++;
+      if (statistics[j].rtt_prv > tmp)
+        sub = statistics[j].rtt_prv - tmp;
       else
-        statistics[j].errs++;
+        sub = tmp - statistics[j].rtt_prv;
 
-      break;
+      if (statistics[j].jtr_min == -1 || statistics[j].jtr_min > sub)
+        statistics[j].jtr_min  = sub;
+
+      if (statistics[j].jtr_max < sub)
+        statistics[j].jtr_max = sub;
+
+      statistics[j].jtr_sum += sub;
     }
 
-    if (found == 0)
-      fprintf(stderr, "Not found\n");
+    statistics[j].rtt_prv = tmp;
+
+    if (icmp_ptr->type == ICMP_ECHOREPLY)
+      statistics[j].recv++;
+    else
+      statistics[j].errs++;
   }
 
-  return ret2;
+  return ret;
 }
 
-sint32 libmping_close()
+s32 libmping_close ()
 {
-  return close(fd);
+  return close (fd);
 }
 
-sint32 libmping_print()
+s32 libmping_print ()
 {
-  float p, rtt_avg, jtr_avg, avail_sum;
-  uint32 i, recv, avail_cnt = 0;
+  f32 p, rtt_avg, jtr_avg, avail_sum;
+  u32 i, recv, avail_cnt = 0;
   char peer[15];
 
-  printf("Statistics\n");
+  printf ("Statistics\n");
 
   for (i = 0; i < 201; ++i)
   {
@@ -256,7 +272,7 @@ sint32 libmping_print()
 
     recv = statistics[i].recv + statistics[i].errs;
 
-    sprintf(peer, "%u.%u.%u.%u", statistics[i].addr.chunk.a, statistics[i].addr.chunk.b, statistics[i].addr.chunk.c, statistics[i].addr.chunk.d);
+    sprintf (peer, "%u.%u.%u.%u", statistics[i].addr.chunk.a, statistics[i].addr.chunk.b, statistics[i].addr.chunk.c, statistics[i].addr.chunk.d);
 
     p = (float)statistics[i].recv / (float)statistics[i].sent * 100.0;
 
@@ -268,8 +284,8 @@ sint32 libmping_print()
 
     if (recv)
     {
-      rtt_avg = statistics[i].rtt_sum / (float)recv;
-      jtr_avg = statistics[i].jtr_sum / (float)recv;
+      rtt_avg = statistics[i].rtt_sum / (f32) recv;
+      jtr_avg = statistics[i].jtr_sum / (f32) recv;
     }
 
     if (statistics[i].rtt_min == -1)
@@ -278,7 +294,7 @@ sint32 libmping_print()
     if (statistics[i].jtr_min == -1)
       statistics[i].jtr_min = 0.0;
 
-    printf("%15s | %5u sent %5u recv %5u errs %3.0f loss | %6.2f %6.2f %6.2f rtt | %6.2f %6.2f %6.2f jtr\n",
+    printf ("%15s | %5u sent %5u recv %5u errs %3.0f loss | %6.2f %6.2f %6.2f rtt | %6.2f %6.2f %6.2f jtr\n",
       peer,
       statistics[i].sent,
       statistics[i].recv,
@@ -293,13 +309,13 @@ sint32 libmping_print()
     );
   }
 
-  printf("--------------------------------------------------------------\n");
-  printf("                 %5u sent, %5u recv, %3.0f avail, %5u errs\n", 0, 0, avail_sum / avail_cnt, 0);
+  printf ("--------------------------------------------------------------\n");
+  printf ("                 %5u sent, %5u recv, %3.0f avail, %5u errs\n", 0, 0, avail_sum / avail_cnt, 0);
 }
 
-void print_stats_peer(struct mmsghdr *messages, uint32 count)
+void print_stats_peer (struct mmsghdr *messages, u32 count)
 {
-  uint32 i, j = 0 ;
+  u32 i, j = 0 ;
   char peer[1024];
 
   struct iphdr       *recv_iphdr;

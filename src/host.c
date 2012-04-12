@@ -5,7 +5,7 @@
 
 int main(int argc, char **argv)
 {
-  uint8 r;
+  u8 r;
   char filename[255] = "misc/hosts_temp";
   struct addr address;
 
@@ -22,7 +22,7 @@ int main(int argc, char **argv)
       r = sscanf(argv[2], "%hhu.%hhu.%hhu.%hhu", &address.chunk.a, &address.chunk.b, &address.chunk.c, &address.chunk.d);
       if (r != 4)
       {
-        printf("Ivalid address %u.%u.%u.%u\n", (uint32)address.chunk.a, (uint32)address.chunk.b, (uint32)address.chunk.c, (uint32)address.chunk.d);
+        printf("Ivalid address %u.%u.%u.%u\n", (u32) address.chunk.a, (u32) address.chunk.b, (u32) address.chunk.c, (u32) address.chunk.d);
         return 1;
       }
 
@@ -46,7 +46,7 @@ int main(int argc, char **argv)
     }
     else if (strcmp("print", argv[1]) == 0)
     {
-      uint32 i;
+      u32 i;
       struct peers *tmp = file_fetch(filename);
 
       for (i = 0; i < tmp->cnt; ++i)

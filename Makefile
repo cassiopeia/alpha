@@ -7,7 +7,7 @@ debug: all
 	LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./build gdb ./build/alpha
 
 build/alpha: build/main.o build/file.o build/libmping.so
-	gcc -o build/alpha -L ./build/ -l mping build/main.o build/file.o
+	gcc -o build/alpha -L ./build/ -l rt -l mping build/main.o build/file.o
 
 build/hosts: build/host.o build/file.o
 	gcc -o build/hosts build/host.o build/file.o
